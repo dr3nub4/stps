@@ -1,1 +1,244 @@
-a
+/* Salary*/
+
+select 
+borep.fn_last_working_day as RptDate, 
+h.trn_dt as TrxDt,
+h.value_dt AS ValDt,
+h.trn_ref_no as ContractNo,
+h.trn_ref_no as TrxID,
+case  when (h.user_id not in ('HALCOM','HALCOMU','HALCOMWS','SYSTEM','SYSTEMAU')and K.home_branch ='001')then 'HO'
+when h.user_id  in ('HALCOM','HALCOMU','HALCOMWS') then 'E-BANKING'
+when h.user_id in ('SYSTEM','SYSTEMAU') THEN 'AUTOMATIC'
+ else 'BRANCH' end as channel,
+case when h.trn_code='PSC' then 'PSC' else 'SAL' end as TrxType,
+h.product as ProdCode,
+h.source_code AS SrcCode,
+h.trn_code AS TrxCode,
+'Y'as ClientTrx,
+CASE WHEN du.customer_no=cu.customer_no THEN 'Y'
+ELSE 'N' END ClientTrxSame,
+substr(h.trn_ref_no,1,3) as TrxBranch,
+b.OFS_BRANCH as DebitAccBranch,
+b.ac_ccy as DebitCcy,
+b.ofs_acc as DebitAcc,
+case when h.ac_ccy <>'LEK' then h.fcy_amount
+else h.lcy_amount END DebitAmt,
+du.customer_no as DebitCustId,
+du.customer_name1 as DebitCustName,
+h.ac_branch as CreditAccBranch,
+h.ac_ccy as CreditCcy,
+h.ac_no as CreditAcc,
+case when h.ac_ccy <>'LEK' then h.fcy_amount
+else h.lcy_amount end CreditAmt,
+cu.customer_no as CreditCustId,
+cu.customer_name1 as CreditCustName,
+case when h.ac_ccy <>'LEK' then h.fcy_amount
+else h.lcy_amount end TrxAmt,
+b.ac_ccy as TrxCcy,
+case when b.ac_ccy<>h.ac_ccy then 'Y' else 'N' end as Forex,
+case when b.ac_ccy=h.ac_ccy then 1 
+else h.exch_rate end ExchRate,
+'N' as PrefExchRate,
+'NA' as ChargeMode,
+0 as Commission,
+'NA' AS CommissionCcy,
+h.user_id as InputUser,
+h.auth_id as ValUser,
+h.module,
+h.event,
+case WHEN (b.event='REVR') then 'R'
+when (b.TRN_REF_NO = c.TRN_REF_NO) then 'C'
+else 'V'
+end as status, 
+'Y' as UserInit,
+case when h.user_id in ('HALCOM','HALCOMU','HALCOMWS','SYSTEM','SYSTEMAU') then 'N'
+when k.home_branch='001' then 'Y' 
+else 'N' end as UserHo,
+(select max(jj.narrative) from FCC.detb_rtl_tlr_ofs_detail_cu jj where jj.ofs_acc = B.ac_no and jj.trn_ref_no = B.trn_ref_no
+and ofs_ccy = B.ac_ccy and ofs_amount = (case when ofs_ccy <> 'LEK' then B.fcy_amount else B.lcy_amount end))as ADDTXT,
+'NA' as ATM,
+h.lcy_amount as TrxAmtALL,
+cust.id as DEBITID,
+custt.id as CREDITID,
+CAST(b.SAVE_TIMESTAMP AS DATE) as InitialDt,
+trim(substr((CAST(b.SAVE_TIMESTAMP AS TIMESTAMP)),11,30)) AS InitialTime,
+b.SAVE_TIMESTAMP AS InitialDtTime,
+b.AUTH_TIMESTAMP AS AuthInitialDtTime,
+'3_7' as SSISSTEP
+
+  from fcc.actb_history h
+  join (select actb_history.trn_ref_no, DETB_RTL_TLR_OFS_DETAIL_CU.OFS_BRANCH,actb_history.ac_ccy,DETB_RTL_TLR_OFS_DETAIL_CU.ofs_acc, case when actb_history.ac_ccy <>'LEK' then actb_history.fcy_amount
+else actb_history.lcy_amount end amount, ACTB_HISTORY.EVENT, actb_history.lcy_amount,actb_history.fcy_amount,actb_history.ac_no,actb_history.SAVE_TIMESTAMP,actb_history.AUTH_TIMESTAMP from fcc.DETB_RTL_TLR_OFS_DETAIL_CU ,fcc.actb_history where DETB_RTL_TLR_OFS_DETAIL_CU.drcr_ind='D'
+and actb_history.drcr_ind='D' and DETB_RTL_TLR_OFS_DETAIL_CU.ofs_acc=actb_history.ac_no and DETB_RTL_TLR_OFS_DETAIL_CU.trn_ref_no=actb_history.trn_ref_no and actb_history.trn_dt=borep.fn_last_working_day) b on h.trn_ref_no=b.trn_ref_no
+left join
+ (select actb_history.trn_ref_no, DETB_RTL_TLR_OFS_DETAIL_CU.OFS_BRANCH,actb_history.ac_ccy,DETB_RTL_TLR_OFS_DETAIL_CU.ofs_acc, case when actb_history.ac_ccy <>'LEK' then actb_history.fcy_amount
+else actb_history.lcy_amount end amount, ACTB_HISTORY.EVENT from fcc.DETB_RTL_TLR_OFS_DETAIL_CU ,fcc.actb_history where DETB_RTL_TLR_OFS_DETAIL_CU.drcr_ind='D'
+and actb_history.drcr_ind='D' and DETB_RTL_TLR_OFS_DETAIL_CU.ofs_acc=actb_history.ac_no and DETB_RTL_TLR_OFS_DETAIL_CU.trn_ref_no=actb_history.trn_ref_no and actb_history.trn_dt=borep.fn_last_working_day and event='REVR' ) C on C.trn_ref_no=b.trn_ref_no 
+  join FCC.sttm_cust_account cre on h.ac_no = cre.cust_ac_no
+  left join FCC.sttm_cust_account de  on b.ofs_acc = de.cust_ac_no
+ left join FCC.sttm_customer du  on du.customer_no=de.cust_no
+left join handoff.CUSTOMER_NO_CLIENT_MAPPING cust on du.customer_no=cust.customer_no
+  join fcc.sttm_customer cu on cu.customer_no=cre.cust_no
+left join handoff.CUSTOMER_NO_CLIENT_MAPPING custt on cu.customer_no=custt.customer_no
+ join fcc.smtb_user k on h.user_id=K.user_id
+where h.product IN ('SALP','PASC') and  h.cust_gl='A' and h.drcr_ind = 'C' and h.TRN_DT=borep.fn_last_working_day
+
+
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+SELECT 
+    borep.fn_last_working_day AS RptDate, 
+    h.trn_dt AS TrxDt,
+    h.value_dt AS ValDt,
+    h.trn_ref_no AS ContractNo,
+    h.trn_ref_no AS TrxID,
+
+    CASE
+        WHEN h.user_id NOT IN ('HALCOM','HALCOMU','HALCOMWS','SYSTEM','SYSTEMAU')
+             AND k.home_branch = '001' THEN 'HO'
+        WHEN h.user_id IN ('HALCOM','HALCOMU','HALCOMWS') THEN 'E-BANKING'
+        WHEN h.user_id IN ('SYSTEM','SYSTEMAU') THEN 'AUTOMATIC'
+        ELSE 'BRANCH'
+    END AS Channel,
+
+    CASE WHEN h.trn_code = 'PSC' THEN 'PSC' ELSE 'SAL' END AS TrxType,
+    h.product AS ProdCode,
+    h.source_code AS SrcCode,
+    h.trn_code AS TrxCode,
+
+    'Y' AS ClientTrx,
+    CASE WHEN du.customer_no = cu.customer_no THEN 'Y' ELSE 'N' END AS ClientTrxSame,
+
+    SUBSTR(h.trn_ref_no,1,3) AS TrxBranch,
+
+    b.ofs_branch AS DebitAccBranch,
+    b.ac_ccy AS DebitCcy,
+    b.ofs_acc AS DebitAcc,
+    CASE WHEN h.ac_ccy <> 'LEK' THEN h.fcy_amount ELSE h.lcy_amount END AS DebitAmt,
+    du.customer_no AS DebitCustId,
+    du.customer_name1 AS DebitCustName,
+
+    h.ac_branch AS CreditAccBranch,
+    h.ac_ccy AS CreditCcy,
+    h.ac_no AS CreditAcc,
+    CASE WHEN h.ac_ccy <> 'LEK' THEN h.fcy_amount ELSE h.lcy_amount END AS CreditAmt,
+    cu.customer_no AS CreditCustId,
+    cu.customer_name1 AS CreditCustName,
+
+    CASE WHEN h.ac_ccy <> 'LEK' THEN h.fcy_amount ELSE h.lcy_amount END AS TrxAmt,
+    b.ac_ccy AS TrxCcy,
+
+    CASE WHEN b.ac_ccy <> h.ac_ccy THEN 'Y' ELSE 'N' END AS Forex,
+    CASE WHEN b.ac_ccy = h.ac_ccy THEN 1 ELSE h.exch_rate END AS ExchRate,
+
+    'N' AS PrefExchRate,
+    'NA' AS ChargeMode,
+    0 AS Commission,
+    'NA' AS CommissionCcy,
+
+    h.user_id AS InputUser,
+    h.auth_id AS ValUser,
+    h.module,
+    h.event,
+
+    CASE
+        WHEN b.event = 'REVR' THEN 'R'
+        WHEN EXISTS (
+            SELECT 1
+            FROM fcc.actb_history x
+            WHERE x.trn_ref_no = h.trn_ref_no
+              AND x.event = 'REVR'
+        ) THEN 'C'
+        ELSE 'V'
+    END AS Status,
+
+    'Y' AS UserInit,
+    CASE
+        WHEN h.user_id IN ('HALCOM','HALCOMU','HALCOMWS','SYSTEM','SYSTEMAU') THEN 'N'
+        WHEN k.home_branch = '001' THEN 'Y'
+        ELSE 'N'
+    END AS UserHo,
+
+    (
+        SELECT MAX(jj.narrative)
+        FROM fcc.detb_rtl_tlr_ofs_detail_cu jj
+        WHERE jj.trn_ref_no = b.trn_ref_no
+          AND jj.ofs_acc = b.ofs_acc
+    ) AS ADDTXT,
+
+    'NA' AS ATM,
+    h.lcy_amount AS TrxAmtALL,
+
+    cust.id AS DebitID,
+    custt.id AS CreditID,
+
+    CAST(b.save_timestamp AS DATE) AS InitialDt,
+    TRIM(SUBSTR(CAST(b.save_timestamp AS TIMESTAMP),11,30)) AS InitialTime,
+    b.save_timestamp AS InitialDtTime,
+    b.auth_timestamp AS AuthInitialDtTime,
+
+    '3_7' AS SSISSTEP
+
+FROM fcc.actb_history h
+
+JOIN (
+    SELECT *
+    FROM (
+        SELECT
+            d.trn_ref_no,
+            d.ofs_branch,
+            h2.ac_ccy,
+            d.ofs_acc,
+            h2.lcy_amount,
+            h2.fcy_amount,
+            h2.event,
+            h2.save_timestamp,
+            h2.auth_timestamp,
+            ROW_NUMBER() OVER (
+                PARTITION BY d.trn_ref_no
+                ORDER BY h2.save_timestamp
+            ) AS rn
+        FROM fcc.detb_rtl_tlr_ofs_detail_cu d
+        JOIN fcc.actb_history h2
+          ON h2.trn_ref_no = d.trn_ref_no
+         AND h2.ac_no = d.ofs_acc
+        WHERE d.drcr_ind = 'D'
+          AND h2.drcr_ind = 'D'
+          AND h2.trn_dt >= '01-JAN-2025'
+          AND h2.trn_dt < '01-JAN-2026'
+    )
+    WHERE rn = 1
+) b
+  ON b.trn_ref_no = h.trn_ref_no
+
+JOIN fcc.sttm_cust_account cre
+  ON h.ac_no = cre.cust_ac_no
+LEFT JOIN fcc.sttm_cust_account de
+  ON b.ofs_acc = de.cust_ac_no
+LEFT JOIN fcc.sttm_customer du
+  ON du.customer_no = de.cust_no
+JOIN fcc.sttm_customer cu
+  ON cu.customer_no = cre.cust_no
+LEFT JOIN handoff.customer_no_client_mapping cust
+  ON cust.customer_no = du.customer_no
+LEFT JOIN handoff.customer_no_client_mapping custt
+  ON custt.customer_no = cu.customer_no
+JOIN fcc.smtb_user k
+  ON h.user_id = k.user_id
+
+WHERE h.product IN ('SALP','PASC')
+  AND h.cust_gl = 'A'
+  AND h.drcr_ind = 'C'
+  AND h.trn_dt >= '01-JAN-2025'
+  AND h.trn_dt < '01-JAN-2026'
+  AND h.trn_ref_no IN ('447SALP252510002')
+--  AND h.ac_no IN ()
+  AND EXISTS (
+      SELECT 1
+      FROM fcc.detb_rtl_tlr_ofs_detail_cu d
+      WHERE d.trn_ref_no = h.trn_ref_no
+        AND d.drcr_ind = 'D'
+  );
