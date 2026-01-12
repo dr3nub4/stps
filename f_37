@@ -38,3 +38,190 @@ HAVING
         )
     )
 ORDER BY trx_month;
+
+
+
+/////////////////////////////////
+
+WITH anomalous_trx AS (
+    SELECT
+        h.trn_ref_no
+    FROM fcc.actb_history h
+    WHERE h.trn_dt >= DATE '2025-01-01'
+      AND h.trn_dt <  DATE '2026-01-01'
+      AND h.drcr_ind = 'C'
+      AND h.cust_gl = 'A'
+      AND h.trn_code IN ('SAL', 'PSC')
+    GROUP BY
+        h.trn_ref_no,
+        h.ac_no,
+        h.lcy_amount
+    HAVING
+        /* Case 1: duplicate credits */
+        COUNT(*) > 1
+
+        OR
+
+        /* Case 2: salary batch (1 credit, many debits) */
+        (
+            COUNT(*) = 1
+            AND EXISTS (
+                SELECT 1
+                FROM fcc.actb_history d
+                WHERE d.trn_ref_no = h.trn_ref_no
+                  AND d.drcr_ind = 'D'
+                GROUP BY d.trn_ref_no
+                HAVING COUNT(*) > 1
+            )
+        )
+)
+
+
+SELECT
+    borep.fn_last_working_day AS RptDate,
+    h.trn_dt AS TrxDt,
+    h.value_dt AS ValDt,
+    h.trn_ref_no AS ContractNo,
+    h.trn_ref_no AS TrxID,
+
+    CASE
+        WHEN h.user_id NOT IN ('HALCOM','HALCOMU','HALCOMWS','SYSTEM','SYSTEMAU')
+             AND k.home_branch = '001' THEN 'HO'
+        WHEN h.user_id IN ('HALCOM','HALCOMU','HALCOMWS') THEN 'E-BANKING'
+        WHEN h.user_id IN ('SYSTEM','SYSTEMAU') THEN 'AUTOMATIC'
+        ELSE 'BRANCH'
+    END AS Channel,
+
+    CASE WHEN h.trn_code = 'PSC' THEN 'PSC' ELSE 'SAL' END AS TrxType,
+    h.product AS ProdCode,
+    h.source_code AS SrcCode,
+    h.trn_code AS TrxCode,
+
+    'Y' AS ClientTrx,
+    CASE WHEN du.customer_no = cu.customer_no THEN 'Y' ELSE 'N' END AS ClientTrxSame,
+
+    SUBSTR(h.trn_ref_no, 1, 3) AS TrxBranch,
+
+    b.ofs_branch AS DebitAccBranch,
+    b.ac_ccy AS DebitCcy,
+    b.ofs_acc AS DebitAcc,
+    CASE WHEN h.ac_ccy <> 'LEK' THEN h.fcy_amount ELSE h.lcy_amount END AS DebitAmt,
+    du.customer_no AS DebitCustId,
+    du.customer_name1 AS DebitCustName,
+
+    h.ac_branch AS CreditAccBranch,
+    h.ac_ccy AS CreditCcy,
+    h.ac_no AS CreditAcc,
+    CASE WHEN h.ac_ccy <> 'LEK' THEN h.fcy_amount ELSE h.lcy_amount END AS CreditAmt,
+    cu.customer_no AS CreditCustId,
+    cu.customer_name1 AS CreditCustName,
+
+    CASE WHEN h.ac_ccy <> 'LEK' THEN h.fcy_amount ELSE h.lcy_amount END AS TrxAmt,
+    b.ac_ccy AS TrxCcy,
+
+    CASE WHEN b.ac_ccy <> h.ac_ccy THEN 'Y' ELSE 'N' END AS Forex,
+    CASE WHEN b.ac_ccy = h.ac_ccy THEN 1 ELSE h.exch_rate END AS ExchRate,
+
+    'N' AS PrefExchRate,
+    'NA' AS ChargeMode,
+    0 AS Commission,
+    'NA' AS CommissionCcy,
+
+    h.user_id AS InputUser,
+    h.auth_id AS ValUser,
+    h.module,
+    h.event,
+
+    CASE
+        WHEN b.event = 'REVR' THEN 'R'
+        WHEN EXISTS (
+            SELECT 1
+            FROM fcc.actb_history x
+            WHERE x.trn_ref_no = h.trn_ref_no
+              AND x.event = 'REVR'
+        ) THEN 'C'
+        ELSE 'V'
+    END AS Status,
+
+    'Y' AS UserInit,
+    CASE
+        WHEN h.user_id IN ('HALCOM','HALCOMU','HALCOMWS','SYSTEM','SYSTEMAU') THEN 'N'
+        WHEN k.home_branch = '001' THEN 'Y'
+        ELSE 'N'
+    END AS UserHo,
+
+    (
+        SELECT MAX(jj.narrative)
+        FROM fcc.detb_rtl_tlr_ofs_detail_cu jj
+        WHERE jj.trn_ref_no = b.trn_ref_no
+          AND jj.ofs_acc   = b.ofs_acc
+    ) AS ADDTXT,
+
+    'NA' AS ATM,
+    h.lcy_amount AS TrxAmtALL,
+
+    cust.id AS DebitID,
+    custt.id AS CreditID,
+
+    CAST(b.save_timestamp AS DATE) AS InitialDt,
+    TRIM(SUBSTR(CAST(b.save_timestamp AS TIMESTAMP), 11, 30)) AS InitialTime,
+    b.save_timestamp AS InitialDtTime,
+    b.auth_timestamp AS AuthInitialDtTime,
+
+    '3_7' AS SSISSTEP
+
+FROM fcc.actb_history h
+
+/* 🔑 Only anomalous transactions */
+JOIN anomalous_trx a
+  ON a.trn_ref_no = h.trn_ref_no
+
+/* Debit side (earliest debit per transaction) */
+JOIN (
+    SELECT *
+    FROM (
+        SELECT
+            d.trn_ref_no,
+            d.ofs_branch,
+            h2.ac_ccy,
+            d.ofs_acc,
+            h2.lcy_amount,
+            h2.fcy_amount,
+            h2.event,
+            h2.save_timestamp,
+            h2.auth_timestamp,
+            ROW_NUMBER() OVER (
+                PARTITION BY d.trn_ref_no
+                ORDER BY h2.save_timestamp
+            ) AS rn
+        FROM fcc.detb_rtl_tlr_ofs_detail_cu d
+        JOIN fcc.actb_history h2
+          ON h2.trn_ref_no = d.trn_ref_no
+         AND h2.ac_no      = d.ofs_acc
+        WHERE d.drcr_ind  = 'D'
+          AND h2.drcr_ind = 'D'
+    )
+    WHERE rn = 1
+) b
+  ON b.trn_ref_no = h.trn_ref_no
+
+JOIN fcc.sttm_cust_account cre
+  ON h.ac_no = cre.cust_ac_no
+LEFT JOIN fcc.sttm_cust_account de
+  ON b.ofs_acc = de.cust_ac_no
+LEFT JOIN fcc.sttm_customer du
+  ON du.customer_no = de.cust_no
+JOIN fcc.sttm_customer cu
+  ON cu.customer_no = cre.cust_no
+LEFT JOIN handoff.customer_no_client_mapping cust
+  ON cust.customer_no = du.customer_no
+LEFT JOIN handoff.customer_no_client_mapping custt
+  ON custt.customer_no = cu.customer_no
+JOIN fcc.smtb_user k
+  ON h.user_id = k.user_id
+
+WHERE h.product IN ('SALP','PASC')
+  AND h.cust_gl = 'A'
+  AND h.drcr_ind = 'C'
+  AND h.trn_dt >= DATE '2025-01-01'
+  AND h.trn_dt <  DATE '2026-01-01';
