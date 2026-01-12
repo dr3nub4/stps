@@ -1,0 +1,40 @@
+SELECT
+    TO_CHAR(h.trn_dt, 'YYYY-MM') AS trx_month,
+    h.event,
+    h.trn_ref_no,
+    h.ac_no,
+    h.lcy_amount,
+    COUNT(*) AS cnt
+FROM fcc.actb_history h
+WHERE h.trn_dt >= DATE '2025-01-01'
+  AND h.trn_dt <  DATE '2026-01-01'
+  AND h.drcr_ind = 'C'
+  AND h.cust_gl = 'A'
+  AND h.trn_code IN ('SAL', 'PSC')
+  AND h.ac_no IN ('902020123021199848')
+  AND h.trn_ref_no IN ('020SALP251610011')
+GROUP BY
+    TO_CHAR(h.trn_dt, 'YYYY-MM'),
+    h.event,
+    h.trn_ref_no,
+    h.ac_no,
+    h.lcy_amount
+HAVING
+    /* ORIGINAL LOGIC — duplicate credits */
+    COUNT(*) > 1
+
+    OR
+
+    /* NEW LOGIC — salary batch (1 credit, many debits) */
+    (
+        COUNT(*) = 1
+        AND EXISTS (
+            SELECT 1
+            FROM fcc.actb_history d
+            WHERE d.trn_ref_no = h.trn_ref_no
+              AND d.drcr_ind = 'D'
+            GROUP BY d.trn_ref_no
+            HAVING COUNT(*) > 1
+        )
+    )
+ORDER BY trx_month;
